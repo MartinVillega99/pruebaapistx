@@ -1,22 +1,14 @@
 FROM python:3.10-slim
 
-# Instalar dependencias de sistema
+# Instalar dependencias de sistema: Chromium y su driver
 RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    unzip \
-    curl \
-    # ^ Asegúrate de incluir "curl"
-    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update && apt-get install -y google-chrome-stable \
-    && CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE) \
-    && wget -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip \
-    && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
-    && rm /tmp/chromedriver.zip \
-    && chmod +x /usr/local/bin/chromedriver \
+    chromium \
+    chromium-driver \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Crear un symlink para que el binario se encuentre en /usr/bin/chromium-browser
+RUN ln -s /usr/bin/chromium /usr/bin/chromium-browser
 
 # Crear carpeta de la app
 WORKDIR /app
@@ -31,5 +23,5 @@ COPY . .
 # Exponer el puerto
 EXPOSE 5000
 
-# Iniciar con Gunicorn (o el comando que uses)
+# Iniciar la app con Gunicorn
 CMD ["gunicorn", "api_sunarp:app", "--bind=0.0.0.0:5000"]
