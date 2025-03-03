@@ -18,18 +18,28 @@ app = Flask(__name__)
 def consultar_vehiculo(placa):
     """
     Realiza el proceso completo:
-      1. Abre la página de SUNARP.
+      1. Abre la página de SUNARP con Chromium (modo headless).
       2. Resuelve el captcha usando EasyOCR.
       3. Ingresa la placa y el captcha.
       4. Realiza la búsqueda y extrae la imagen de resultado en Base64.
     Retorna un diccionario con el resultado.
     """
+
+    # Opciones de Selenium para Chromium
     options = webdriver.ChromeOptions()
-    # Ejecutar en modo headless para que no se muestre la ventana del navegador
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
-    driver = webdriver.Chrome(options=options)
+
+    # Ruta del binario de Chromium (instalado por 'apt-get install chromium-browser')
+    options.binary_location = "/usr/bin/chromium-browser"
+
+    # Instancia de ChromeDriver (instalado por 'apt-get install chromium-driver')
+    driver = webdriver.Chrome(
+        executable_path="/usr/bin/chromedriver",  # Ruta al driver
+        options=options
+    )
+
     driver.get("https://www2.sunarp.gob.pe/consulta-vehicular/inicio")
 
     max_intentos = 35
@@ -155,7 +165,7 @@ def consultar_vehiculo(placa):
             driver.quit()
             return {
                 "status": "error",
-                "message": "No se encontró imagen del resultado Sunarp Placa", #"message": "No se encontró imagen de resultado (placa no existente o captcha fallido)",
+                "message": "No se encontró imagen del resultado Sunarp Placa",
                 "Placa": placa
             }
         intento += 1
@@ -163,7 +173,7 @@ def consultar_vehiculo(placa):
     driver.quit()
     return {
         "status": "error",
-        "message": f"No se pudo conectar correctamente al servidor - Intenta Nuevamente", #"message": f"No se pudo resolver el captcha tras {max_intentos} intentos.",
+        "message": f"No se pudo conectar correctamente al servidor - Intenta Nuevamente",
         "Developer": "https://t.me/SetaxOne",
         "Placa": placa
     }
@@ -179,7 +189,7 @@ def sunarp_api(placa):
     Retorna un JSON con:
       - status: "success" o "error"
       - message: mensaje descriptivo
-      - PLACA: la placa consultada
+      - Placa: la placa consultada
       - base64: la imagen de resultado en Base64 (con prefijo)
     """
     resultado = consultar_vehiculo(placa)
