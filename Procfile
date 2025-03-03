@@ -1,1 +1,1 @@
-web: gunicorn sunarp-api:app
+web: gunicorn api_sunarp:app
