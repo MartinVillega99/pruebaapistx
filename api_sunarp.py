@@ -209,7 +209,5 @@ def sunarp_api(placa):
     return jsonify(resultado)
 
 if __name__ == "__main__":
-    # En Render se utiliza el puerto asignado por la variable de entorno PORT, 
-    # por defecto se asigna 10000 si no existe.
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
