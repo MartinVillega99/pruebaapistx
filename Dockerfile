@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# Instalar dependencias de sistema: Chromium y su driver
+# Instalar dependencias de sistema: Chromium y Chromium Driver
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
@@ -10,17 +10,17 @@ RUN apt-get update && apt-get install -y \
 # Crear un symlink para que el binario se encuentre en /usr/bin/chromium-browser
 RUN ln -s /usr/bin/chromium /usr/bin/chromium-browser
 
-# Crear carpeta de la app
+# Establecer el directorio de la app
 WORKDIR /app
 
-# Copiar requirements e instalarlos
+# Copiar requirements.txt e instalar dependencias
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el resto de tu proyecto
+# Copiar el resto del proyecto
 COPY . .
 
-# Exponer el puerto
+# Exponer el puerto (Railway asigna el puerto a través de la variable PORT)
 EXPOSE 5000
 
 # Iniciar la app con Gunicorn
