@@ -24,4 +24,4 @@ COPY . .
 EXPOSE 5000
 
 # Iniciar la app con Gunicorn
-CMD ["gunicorn", "--timeout", "200", "api_sunarp:app", "--bind=0.0.0.0:5000"]
+CMD ["gunicorn", "--timeout", "1200", "api_sunarp:app", "--bind=0.0.0.0:5000"]
