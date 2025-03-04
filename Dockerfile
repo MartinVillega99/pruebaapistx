@@ -23,5 +23,5 @@ COPY . /app/
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-# Comando de inicio: Render usará la variable de entorno PORT
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:$PORT", "api_sunarp:app"]
+# Forma "shell": el shell expandirá la variable $PORT antes de ejecutar gunicorn
+CMD gunicorn -w 4 -b 0.0.0.0:$PORT api_sunarp:app
