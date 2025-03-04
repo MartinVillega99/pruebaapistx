@@ -8,6 +8,7 @@ import os
 
 from flask import Flask, jsonify
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service  # Importación para Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -24,22 +25,16 @@ def consultar_vehiculo(placa):
       4. Realiza la búsqueda y extrae la imagen de resultado en Base64.
     Retorna un diccionario con el resultado.
     """
-
-    # Opciones de Selenium para Chromium
     options = webdriver.ChromeOptions()
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
-
-    # Ruta del binario de Chromium (instalado por 'apt-get install chromium-browser')
+    # Indicar la ruta al binario de Chromium
     options.binary_location = "/usr/bin/chromium-browser"
 
-    # Instancia de ChromeDriver (instalado por 'apt-get install chromium-driver')
-    driver = webdriver.Chrome(
-        executable_path="/usr/bin/chromedriver",  # Ruta al driver
-        options=options
-    )
-
+    # Usar el objeto Service para indicar la ruta del driver
+    service = Service("/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=options)
     driver.get("https://www2.sunarp.gob.pe/consulta-vehicular/inicio")
 
     max_intentos = 35
@@ -178,9 +173,6 @@ def consultar_vehiculo(placa):
         "Placa": placa
     }
 
-# ============================================
-# RUTA DE LA API (GET)
-# ============================================
 @app.route("/sunarp/placa=<placa>", methods=["GET"])
 def sunarp_api(placa):
     """
