@@ -5,10 +5,8 @@ import cv2
 import numpy as np
 import easyocr
 import os
-
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service  # Importación para Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -16,10 +14,26 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 app = Flask(__name__)
 
+# Inicializamos el lector de EasyOCR una sola vez
+reader = easyocr.Reader(["en"])
+
+# Caché simple en memoria: { placa: { "result": ..., "time": timestamp } }
+cache = {}
+CACHE_TTL = 20  # Tiempo en segundos (puedes ajustar este valor)
+
+def get_cached_result(placa):
+    entry = cache.get(placa)
+    if entry and (time.time() - entry["time"]) < CACHE_TTL:
+        return entry["result"]
+    return None
+
+def set_cached_result(placa, result):
+    cache[placa] = {"result": result, "time": time.time()}
+
 def consultar_vehiculo(placa):
     """
     Realiza el proceso completo:
-      1. Abre la página de SUNARP con Chromium (modo headless).
+      1. Abre la página de SUNARP.
       2. Resuelve el captcha usando EasyOCR.
       3. Ingresa la placa y el captcha.
       4. Realiza la búsqueda y extrae la imagen de resultado en Base64.
@@ -29,53 +43,37 @@ def consultar_vehiculo(placa):
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
-    # Indicar la ruta al binario de Chromium
-    options.binary_location = "/usr/bin/chromium-browser"
-
-    # Usar el objeto Service para indicar la ruta del driver
-    service = Service("/usr/bin/chromedriver")
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = webdriver.Chrome(options=options)
     driver.get("https://www2.sunarp.gob.pe/consulta-vehicular/inicio")
 
     max_intentos = 35
     intento = 1
 
     def leer_captcha():
-        # Espera a que aparezca la imagen del captcha y la extrae en Base64
         captcha_element = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "image"))
         )
         captcha_src = captcha_element.get_attribute("src")
         captcha_b64 = captcha_src.split(",")[1]
-
-        # Guarda la imagen original
-        with open("captcha.png", "wb") as f:
-            f.write(base64.b64decode(captcha_b64))
-
-        # Procesa la imagen para mejorar la lectura (escala de grises y umbral)
-        img = cv2.imread("captcha.png", cv2.IMREAD_GRAYSCALE)
+        # Procesa la imagen en memoria sin escribir en disco
+        img_data = base64.b64decode(captcha_b64)
+        nparr = np.frombuffer(img_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
         _, img_thresh = cv2.threshold(img, 150, 255, cv2.THRESH_BINARY_INV)
-        cv2.imwrite("captcha_processed.png", img_thresh)
-
-        # Reconoce el texto con EasyOCR
-        reader = easyocr.Reader(["en"])
-        result = reader.readtext("captcha_processed.png")
+        result = reader.readtext(img_thresh)
         if not result:
             return ""
         captcha_text = "".join([res[1] for res in result])
-        captcha_text = captcha_text.replace(" ", "").strip()
-        # Elimina caracteres que no sean alfanuméricos
+        captcha_text = re.sub(r"\s+", "", captcha_text).strip()
         captcha_text = re.sub(r"[^A-Za-z0-9]", "", captcha_text)
         return captcha_text
 
     def ingresar_datos(placa_text, captcha_text):
-        # Ingresa la placa en el campo correspondiente
         input_placa = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "nroPlaca"))
         )
         input_placa.clear()
         input_placa.send_keys(placa_text)
-        # Ingresa el captcha en su campo
         input_captcha = driver.find_element(By.ID, "codigoCaptcha")
         input_captcha.clear()
         input_captcha.send_keys(captcha_text)
@@ -83,16 +81,13 @@ def consultar_vehiculo(placa):
     def click_buscar():
         try:
             search_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR, "button.btn-sunarp-green.ant-btn-primary.ant-btn-lg")
-                )
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-sunarp-green.ant-btn-primary.ant-btn-lg"))
             )
             search_button.click()
         except TimeoutException:
             print("❌ El botón de búsqueda no se habilitó.")
 
     def manejar_popup_error():
-        # Verifica si aparece el popup "Captcha inválido" y hace clic en OK
         try:
             ok_button = WebDriverWait(driver, 2).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button.swal2-confirm.swal2-styled"))
@@ -103,7 +98,6 @@ def consultar_vehiculo(placa):
             return False
 
     def error_ingrese_captcha():
-        # Verifica si aparece el mensaje "Ingrese el captcha" en la página
         try:
             WebDriverWait(driver, 2).until(
                 EC.presence_of_element_located(
@@ -115,64 +109,78 @@ def consultar_vehiculo(placa):
             return False
 
     def obtener_imagen_resultado():
-        """
-        Extrae la imagen de resultado y retorna la cadena Base64.
-        """
-        time.sleep(2)
-        result_img_element = driver.find_element(By.XPATH, "//app-form-datos-consulta//img")
+        result_img_element = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//app-form-datos-consulta//img"))
+        )
         return result_img_element.get_attribute("src").split(",")[1]
 
-    while intento <= max_intentos:
-        print(f"=== Intento #{intento} ===")
-        if intento > 1:
-            print("🔄 Refrescando la página para obtener un nuevo captcha...")
-            driver.refresh()
-            time.sleep(2)
-        captcha_text = leer_captcha()
-        print(f"Captcha leído: '{captcha_text}'")
-        if len(captcha_text) < 6:
-            print("❌ Captcha muy corto o inválido. Reintentando...")
-            intento += 1
-            continue
-        ingresar_datos(placa, captcha_text)
-        click_buscar()
-        time.sleep(1)
-        if manejar_popup_error():
-            print("❌ Popup: Captcha inválido. Reintentando...")
-            intento += 1
-            continue
-        if error_ingrese_captcha():
-            print("❌ Mensaje: 'Ingrese el captcha'. Reintentando...")
-            intento += 1
-            continue
-        try:
-            final_b64 = obtener_imagen_resultado()
-            driver.quit()
-            return {
-                "status": "success",
-                "message": "Consulta realizada con éxito",
-                "Developer": "https://t.me/SetaxOne",
-                "Placa": placa,
-                "base64": "data:image/png;base64," + final_b64
-            }
-        except NoSuchElementException:
-            print("No se encontró imagen de resultado. Terminando...")
-            driver.quit()
-            return {
-                "status": "error",
-                "message": "No se encontró imagen del resultado Sunarp Placa",
-                "Placa": placa
-            }
-        intento += 1
+    resultado = None
+    try:
+        while intento <= max_intentos:
+            print(f"=== Intento #{intento} ===")
+            if intento > 1:
+                print("🔄 Refrescando la página para obtener un nuevo captcha...")
+                driver.refresh()
+                time.sleep(2)
+            captcha_text = leer_captcha()
+            print(f"Captcha leído: '{captcha_text}'")
+            if len(captcha_text) < 6:
+                print("❌ Captcha muy corto o inválido. Reintentando...")
+                intento += 1
+                continue
+            ingresar_datos(placa, captcha_text)
+            click_buscar()
+            time.sleep(1)
+            if manejar_popup_error():
+                print("❌ Popup: Captcha inválido. Reintentando...")
+                intento += 1
+                continue
+            if error_ingrese_captcha():
+                print("❌ Mensaje: 'Ingrese el captcha'. Reintentando...")
+                intento += 1
+                continue
+            try:
+                final_b64 = obtener_imagen_resultado()
+                resultado = {
+                    "status": "success",
+                    "message": "Consulta realizada con éxito",
+                    "Developer": "https://t.me/SetaxOne",
+                    "Placa": placa,
+                    "base64": "data:image/png;base64," + final_b64
+                }
+                break
+            except NoSuchElementException:
+                print("❌ No se encontró imagen de resultado. Terminando...")
+                resultado = {
+                    "status": "error",
+                    "message": "No se encontró imagen del resultado Sunarp Placa",
+                    "Placa": placa
+                }
+                break
+            finally:
+                intento += 1
+    except Exception as e:
+        print(f"❌ Error inesperado: {e}")
+        resultado = {
+            "status": "error",
+            "message": f"Error inesperado: {e}",
+            "Placa": placa
+        }
+    finally:
+        driver.quit()
 
-    driver.quit()
-    return {
-        "status": "error",
-        "message": f"No se pudo conectar correctamente al servidor - Intenta Nuevamente",
-        "Developer": "https://t.me/SetaxOne",
-        "Placa": placa
-    }
+    if resultado is None:
+        resultado = {
+            "status": "error",
+            "message": "No se pudo conectar correctamente al servidor - Intenta Nuevamente",
+            "Developer": "https://t.me/SetaxOne",
+            "Placa": placa
+        }
+    return resultado
 
+# ============================================
+# RUTA DE LA API (GET)
+# ============================================
 @app.route("/sunarp/placa=<placa>", methods=["GET"])
 def sunarp_api(placa):
     """
@@ -183,10 +191,25 @@ def sunarp_api(placa):
       - message: mensaje descriptivo
       - Placa: la placa consultada
       - base64: la imagen de resultado en Base64 (con prefijo)
+      - time_response: tiempo de respuesta en segundos
     """
+    # Verifica si hay resultado cacheado para la placa
+    cached = get_cached_result(placa)
+    if cached:
+        cached["time_response"] = 0.0  # Se asume respuesta inmediata desde caché
+        return jsonify(cached)
+
+    start_time = time.time()
     resultado = consultar_vehiculo(placa)
+    elapsed = time.time() - start_time
+    resultado["time_response"] = round(elapsed, 3)
+    # Guarda en caché el resultado si es exitoso
+    if resultado.get("status") == "success":
+        set_cached_result(placa, resultado)
     return jsonify(resultado)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    # En Render se utiliza el puerto asignado por la variable de entorno PORT, 
+    # por defecto se asigna 10000 si no existe.
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
